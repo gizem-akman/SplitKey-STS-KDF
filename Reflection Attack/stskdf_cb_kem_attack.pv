@@ -1,0 +1,183 @@
+free internet:channel.
+
+type skey.
+type pkey.
+type host.
+type sskey.
+type spkey.
+type key.
+
+free Alice:host[private].    
+free Bob:host[private].
+     
+free SK:skey[private].   
+    
+fun spk(sskey):spkey.
+
+(*Key Encapsulation Mechanism*)
+fun pk(skey):pkey.
+fun Encaps(bitstring,pkey):bitstring. (*Encaps takes a freshly generated random number and the pk. Note that by definition Encaps is a probabilistic algorithm *)
+fun KEMkey(bitstring):key. (*takes Encaps as input and outputs the shared KEM key*)
+fun KEMCipher(bitstring):bitstring. (*takes Encaps as input and outputs the KEM ciphertext*)
+fun DecapsKey(bitstring,skey):key. (*takes ciphertext and the KEM secret key and outputs the KEM shared key*)
+
+(*The KEM is given by the following equations *) 
+equation forall sk:skey, r:bitstring; DecapsKey(KEMCipher(Encaps(r,pk(sk))),sk)=KEMkey(Encaps(r,pk(sk))).
+
+(*KDF*)
+fun KDF(key,key,key,bitstring,bitstring):key. (*K_sh*)
+
+(*certification*)
+fun makecert(host,pkey,sskey):bitstring.
+reduc forall x:host, y:pkey, z:sskey; checkCert(makecert(x,y,z),spk(z))=(x,y).
+
+(*MAC*)
+fun mac(bitstring,bitstring,bitstring,bitstring,bitstring,key):bitstring. (*mac of certificate*)
+reduc forall x1:bitstring,x2:bitstring,x3:bitstring,y1:bitstring,y2:bitstring,k:key; checkmac(mac(x1,x2,x3,y1,y2,k),k)=(x1,x2,x3,y1,y2).
+
+(*symmetric encryption*)
+fun senc(bitstring,key):bitstring.
+reduc forall x:bitstring, k:key; sdec(senc(x,k),k)=x.
+
+(*Events*)
+event beginA(host,host,pkey).
+
+event checkCertB(bitstring).
+event receiveAB1(pkey).
+event hasKeyBob(host,host,key).
+event beginB(host,bitstring,bitstring,bitstring).
+
+event receiveBA1(bitstring,bitstring,bitstring).
+event hasKeyAlice(host,host,key).
+event CheckedMAC1(bitstring).
+event AliceFinished(host,host,key).
+
+event receiveAB2(bitstring,bitstring).
+event BobFinished(host,host,key).
+
+(* Reachability *)
+query x:host,y:host,z:pkey; event(beginA(x,y,z)).
+
+query x:bitstring; event(checkCertB(x)).
+query x:pkey; event(receiveAB1(x)).
+query x:host,y:host,z:key; event(hasKeyBob(x,y,z)).
+query x:host,y:bitstring,z:bitstring,t:bitstring; event(beginB(x,y,z,t)).
+
+query x:bitstring,y:bitstring,z:bitstring; event(receiveBA1(x,y,z)).
+query x:host,y:host,z:key; event(hasKeyAlice(x,y,z)).
+query x:bitstring; event(CheckedMAC1(x)).
+query x:host,y:host,z:key; event(AliceFinished(x,y,z)).
+
+query x:bitstring,y:bitstring; event(receiveAB2(x,y)).
+query x:host,y:host,z:key; event(BobFinished(x,y,z)).
+
+(*Anonymity*)
+query attacker(Alice).    
+query attacker(Bob). 
+
+(*Secrecy for session key: K*)
+query a:host,b:host,k:key; event(AliceFinished(a,b,k))&&attacker(k) ==> false.
+query a:host,b:host,k:key; event(BobFinished(a,b,k))&&attacker(k) ==> false.
+
+(*Authentication*)
+query a:host,b:host,k:key; inj-event(AliceFinished(a,b,k)) ==> inj-event(hasKeyBob(a,b,k)).
+query a:host,b:host,k:key; inj-event(BobFinished(a,b,k)) ==> inj-event(AliceFinished(a,b,k)).
+
+(*Unknown Key Share (UKS) attack*)
+query a:host,b:host,c:host,d:host,k:key; event(hasKeyAlice(a,b,k)) && event(hasKeyBob(c,d,k)) ==> a=c && b=d.
+query a:host,b:host,c:host,d:host,k:key; event(hasKeyBob(a,b,k)) && event(hasKeyAlice(c,d,k)) ==> a=c && b=d.
+
+
+let processAlice(Alice:host,sk:skey,certA:bitstring,pkCA:spkey)=
+
+(*1*)
+    new SKA:skey;                
+    let PKA=pk(SKA) in (*KEM_Gen*)
+
+    in(internet,certB:bitstring);
+    let (Bob:host,pkB:pkey)=checkCert(certB,pkCA) in
+    if certB<>certA then
+
+    (*Encaps with pkb*)
+    new random0:bitstring;
+    let Encapsulation0=Encaps(random0,pkB) in
+    let K0=KEMkey(Encapsulation0) in
+    let C0=KEMCipher(Encapsulation0) in
+
+    let enc=senc(certA,K0) in
+
+(*2*)
+    event beginA(Alice,Bob,PKA);
+    out(internet,(PKA,C0,enc));
+
+(*4*)
+    in(internet,(C1:bitstring,C2:bitstring,MAC1:bitstring));
+    event receiveBA1(C1,C2,MAC1);
+
+(*5*)
+    let K1=DecapsKey(C1,SKA) in
+    let K2=DecapsKey(C2,sk) in
+
+    let K=KDF(K0,K1,K2,certA,certB) in
+    event hasKeyAlice(Alice,Bob,K);
+
+    if (C0,C1,C2,certB,certA)=checkmac(MAC1,K) then
+    event CheckedMAC1(MAC1);
+
+    let MAC2=mac(C0,C1,C2,certA,certB,K) in
+
+    event AliceFinished(Alice,Bob,K);
+    out(internet,MAC2).
+
+let processBob(Bob:host,sk:skey,certB:bitstring,pkCA:spkey)=
+
+(*2*)
+    in(internet,(PKA:pkey,C0:bitstring,enc:bitstring));
+(*3*)
+    let K0=DecapsKey(C0,sk) in
+
+    let certA=sdec(enc,K0) in
+
+    let (Alice:host,pkA:pkey)=checkCert(certA,pkCA) in
+    if certA<>certB then
+    event checkCertB(certA);
+    event receiveAB1(PKA); 
+    
+    (*Encaps with fresh PKA*)
+    new random1:bitstring;
+    let Encapsulation1=Encaps(random1,PKA) in
+    let K1=KEMkey(Encapsulation1) in
+    let C1=KEMCipher(Encapsulation1) in
+                        
+    (*Encaps with cert pka*)
+    new random2:bitstring;
+    let Encapsulation2=Encaps(random2,pkA) in
+    let K2=KEMkey(Encapsulation2) in
+    let C2=KEMCipher(Encapsulation2) in                        
+
+    let K=KDF(K0,K1,K2,certA,certB) in
+    event hasKeyBob(Alice,Bob,K);
+
+    let MAC1=mac(C0,C1,C2,certB,certA,K) in
+(*4*)                     
+    event beginB(Bob,C1,C2,MAC1);
+    out(internet,(C1,C2,MAC1));
+
+(*6*)
+    in(internet,(MAC2:bitstring));
+    event receiveAB2(C2,MAC2);
+
+(*7*)
+    if (C0,C1,C2,certA,certB)=checkmac(MAC2,K) then                     
+    event BobFinished(Alice,Bob,K).
+
+
+process
+    new skCA:sskey; let pkCA=spk(skCA) in out(internet,(pkCA));
+    new Alice:host;  let pk=pk(SK) in let cert1=makecert(Alice,pk,skCA) in out(internet,(cert1));
+    new Bob:host;  let cert2=makecert(Bob,pk,skCA) in out(internet,(cert2));
+
+    !processAlice(Alice,SK,cert1,pkCA) | !processBob(Bob,SK,cert2,pkCA)| !processAlice(Bob,SK,cert2,pkCA) | !processBob(Alice,SK,cert1,pkCA) 
+    | phase 1; out(internet,(SK,skCA))
+
+

@@ -1,0 +1,178 @@
+free internet:channel.
+
+type G.
+type key.
+type spkey.
+type sskey.
+type exponent.
+type nonce.
+type host.
+
+(*Diffie-Hellman generation*)
+const g:G[data].
+fun exp(G,exponent):G.
+equation forall x:exponent, y:exponent;
+exp(exp(g,x),y)=exp(exp(g,y),x).
+
+(*Signature*)
+fun spk(sskey):spkey.
+fun sign(G,G,sskey):bitstring.
+reduc forall x:G, y:G, z:sskey; getmess(sign(x,y,z))=(x,y).
+reduc forall x:G, y:G, z:sskey; checksign(sign(x,y,z),spk(z))=(x,y).
+
+(*MAC*)
+fun mac(bitstring,G):bitstring. 
+reduc forall x:bitstring,y:G; checkmac(mac(x,y),y)=x.
+
+(*KDF*)
+fun kdf(G,host,host):key.
+
+(*certification*)
+fun makecert(host,spkey,sskey):bitstring.
+reduc forall x:host, y:spkey, z:sskey; checkCert(makecert(x,y,z),spk(z))=(x,y).
+
+(*symmetric encryption*)
+fun senc(bitstring,G):bitstring.
+reduc forall x:bitstring, k:G; sdec(senc(x,k),k)=x.
+
+(*Events*)
+event beginA(host,G).
+event receiveBA1(host,G,bitstring,bitstring).
+event Amac(host,host,G).
+event verifAmac(host,host,G).
+event verifAsign(bitstring).
+event respondA(bitstring).
+event acceptKeyAlice(host,host,key).
+
+event receiveAB1(G).
+event beginB(host,G,bitstring,bitstring).
+event receiveAB2(host,bitstring,bitstring).
+event Bmac(host,G).
+event verifBmac(host,host,G).
+event verifBsign(bitstring).
+event acceptKeyBob(host,host,key).
+
+(*Reachability*)
+query x:host,z:G; event(beginA(x,z)).
+query x:host,y:G,z:bitstring,t:bitstring; event(receiveBA1(x,y,z,t)).
+query x:host,y:host,z:G; event(verifAmac(x,y,z)).
+query x:host,y:host,z:G; event(Amac(x,y,z)).
+query x:bitstring; event(verifAsign(x)).
+query x:bitstring; event(respondA(x)).
+query x:host,y:host,z:key; event(acceptKeyAlice(x,y,z)).
+query y:G; event(receiveAB1(y)).
+query x:host,y:G,z:bitstring,t:bitstring; event(beginB(x,y,z,t)).
+query x:host,y:bitstring,z:bitstring; event(receiveAB2(x,y,z)).
+query x:host,z:G; event(Bmac(x,z)).
+query x:host,y:host,z:G; event(verifBmac(x,y,z)).
+query x:bitstring; event(verifBsign(x)).
+query x:host,y:host,z:key; event(acceptKeyBob(x,y,z)).
+
+(*Anonymity*)
+free Alice:host[private].
+query attacker(Alice).    
+    
+free Bob:host[private].
+query attacker(Bob). 
+
+
+(*Secrecy of K*)
+query a:host,b:host,k:key; event(acceptKeyAlice(a,b,k))&&attacker(k) ==> false.
+query a:host,b:host,k:key; event(acceptKeyBob(a,b,k))&&attacker(k) ==> false.
+
+(*Authentication K_DH*)
+query a:host,b:host,k:G; inj-event(verifBmac(a,b,k)) ==> inj-event(Amac(a,b,k)).
+query a:host,b:host,k:G; inj-event(verifAmac(a,b,k)) ==> inj-event(Bmac(b,k)).
+
+(*Authentication of K*)
+query a:host,b:host,k:key; event(acceptKeyBob(a,b,k)) ==> event(acceptKeyAlice(a,b,k)).
+query a:host,b:host,k:key; event(acceptKeyAlice(a,b,k)) ==> event(acceptKeyBob(a,b,k)).
+
+(*Unknown Key Share (UKS) attack K_DH*)
+query a:host,b:host,c:host,d:host,k:G; event(verifBmac(a,b,k)) && event(Amac(c,d,k)) ==> a=c && b=d.
+query a:host,b:host,c:host,d:host,k:G; event(verifAmac(a,b,k)) && event(Bmac(c,k)) ==> b=c.
+
+(*Unknown Key Share (UKS) attack K*)
+query a:host,b:host,c:host,d:host,k:key; event(acceptKeyBob(a,b,k)) && event(acceptKeyAlice(c,d,k)) ==> a=c && b=d.
+query a:host,b:host,c:host,d:host,k:key; event(acceptKeyAlice(a,b,k)) && event(acceptKeyBob(c,d,k)) ==> a=c && b=d.
+
+let processAlice(Alice:host,certA:bitstring,skA:sskey,pkCA:spkey)=
+(*1*)
+    new a:exponent;
+    let pa=exp(g,a) in
+    (* in(internet,Bob:host); *)
+(*2*)
+    event beginA(Alice,pa);
+    out(internet,pa);
+
+(*4*)
+    in(internet,(pb:G,certB:bitstring,SigB:bitstring,macB:bitstring));
+    let(Bob:host,pkB:spkey)=checkCert(certB,pkCA) in
+    event receiveBA1(Bob,pb,SigB,macB);
+(*5*)
+    let K_DH=exp(pb,a) in
+
+    let (=SigB)=checkmac(macB,K_DH) in
+    let (=pb,=pa)=checksign(SigB,pkB) in
+
+    event verifAmac(Alice,Bob,K_DH);
+    event verifAsign(SigB);
+
+    let SigA=sign(pa,pb,skA) in
+
+    let macA=mac(SigA,K_DH) in
+    event Amac(Alice,Bob,K_DH);
+(*6*)
+    event respondA(SigA);
+    out(internet,(certA,SigA,macA));
+
+(*8*)
+    let K=kdf(K_DH,Alice,Bob) in
+    event acceptKeyAlice(Alice,Bob,K).
+
+
+let processBob(Bob:host,certB:bitstring,skB:sskey, pkCA:spkey)=
+(*3*)
+    in(internet,pa:G);
+    event receiveAB1(pa); 
+    new b:exponent;
+    let pb=exp(g,b) in
+
+    let K_DH=exp(pa,b) in
+
+    let SigB=sign(pb,pa,skB) in
+
+    let macB=mac(SigB,K_DH) in
+    event Bmac(Bob,K_DH);
+(*4*)
+    event beginB(Bob,pb,SigB,macB);
+    out(internet,(pb,certB,SigB,macB));
+
+(*6*)
+    in(internet,(certA:bitstring,SigA:bitstring,macA:bitstring));
+    let (Alice:host,pkA:spkey)=checkCert(certA,pkCA) in
+    event receiveAB2(Alice,SigA,macA);
+(*7*)
+    let (=SigA)=checkmac(macA,K_DH) in
+    let (=pa,=pb)=checksign(SigA,pkA) in
+
+    event verifBmac(Alice,Bob,K_DH);
+    event verifBsign(SigA);
+    
+(*8*)
+    let K=kdf(K_DH,Alice,Bob) in 
+    event acceptKeyBob(Alice,Bob,K).
+
+process
+    new skCA:sskey; let pkCA=spk(skCA) in out(internet,pkCA);
+    new Alice:host; new sk1:sskey; let pk1=spk(sk1) in let cert1=makecert(Alice,pk1,skCA) in out(internet,(cert1,sk1));
+    (*The secret key of id1 is leaked to check Key Compromise Impersonation attack*)
+    (* new Alice:host; new sk1:sskey; let pk1=spk(sk1) in let cert1=makecert(Alice,pk1,skCA) in out(internet,(cert1,sk1));*)
+    
+    new Bob:host; new sk2:sskey; let pk2=spk(sk2) in let cert2=makecert(Bob,pk2,skCA) in out(internet,cert2);
+    (*The secret key of id1 is leaked to check Key Compromise Impersonation attack*)
+    (* new Bob:host; new sk2:sskey; let pk2=spk(sk2) in let cert2=makecert(Bob,pk2,skCA) in out(internet,(cert2,sk2));*)
+    
+    !processAlice(Alice,cert1,sk1,pkCA) | !processBob(Bob,cert2,sk2,pkCA) 
+    (* !processAlice(Alice,sk1,pkCA) | !processBob(Alice,sk1,pkCA) | !processAlice(Bob,sk2,pkCA) | !processBob(Bob,sk2,pkCA)  *)   
+    | phase 1; out(internet,(sk1,sk2,skCA))
