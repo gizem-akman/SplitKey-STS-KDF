@@ -1,6 +1,6 @@
 # ProVerif Implementation of STS-KDF and Split-Key STS-KDF variants
 
-This project contains the code of ProVerif implementation of STS-KDF, STS-KDF-CB variants, and Split-Key STS-KDF-CB prepared by Gizem Akman, Mohamed Taoufiq Damir, Philip Ginzboorg, Sampo Sovio, and Valtteri Niemi. 
+This project is developed in Secure System Group, University of Helsinki, by Gizem Akman, Mohamed Taoufiq Damir, Philip Ginzboorg, Sampo Sovio, and Valtteri Niemi. 
 
 ## Objective
 
